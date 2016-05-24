@@ -1,0 +1,3 @@
+[submodule "vec3"]
+	path = vec3
+	url = git@github.com:henriasv/vec3
