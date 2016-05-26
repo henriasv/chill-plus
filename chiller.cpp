@@ -2,37 +2,86 @@
 
 #include "chiller.h"
 #include <iostream>
+#include <cmath>
 
 Chiller::Chiller()
 {
 
 }
 
-Chiller::Chiller(double* positions, int numParticles)
+Chiller::~Chiller()
 {
-  m_simulationCell = {vec3(288.72, 0, 0), vec3(0, 288.72, 0), vec3(0, 0, 288.72), vec3(0, 0, 0)};
-  m_simulationCellSize = vec3(m_simulationCell[0].x()-m_simulationCell[3].x(),
-                              m_simulationCell[1].y()-m_simulationCell[3].y(),
-                              m_simulationCell[2].z()-m_simulationCell[3].z());
+  for (int i = 0; i<m_nBins[0]; i++)
+  {
+    for (int j = 0; j<m_nBins[1]; j++)
+    {
+      for (int k = 0; k<m_nBins[2]; k++)
+      {
+        //m_cells[i][j][k]->clear();
+        //std::cout << i << " " << j << " " << k << std::endl;
+        if (m_cells[i][j][k] != NULL)
+        {
+          delete m_cells[i][j][k];
+          m_cells[i][j][k] = NULL;
+        }
+        //std::cout << i << " " << j << " " << k << std::endl;
+      }
+      //delete m_cells[i][j];
+    }
+    //delete m_cells[i];
+  }
+  //delete m_cells;
+}
+
+Chiller::Chiller(double* positions, int numParticles, double* simulationCell)
+{
+  vec3 cellvec1(simulationCell[0], simulationCell[1], simulationCell[2]);
+  vec3 cellvec2(simulationCell[3], simulationCell[4], simulationCell[5]);
+  vec3 cellvec3(simulationCell[6], simulationCell[7], simulationCell[8]);
+  vec3 cellorigin(simulationCell[9], simulationCell[10], simulationCell[11]);
+  std::cout << cellvec1 << std::endl;
+  std::cout << cellvec2 << std::endl;
+  std::cout << cellvec3 << std::endl;
+  std::cout << cellorigin << std::endl;
+  m_simulationCell = {cellvec1, cellvec2, cellvec3, cellorigin};
+  m_simulationCellSize = vec3(m_simulationCell[0].x(),
+                              m_simulationCell[1].y(),
+                              m_simulationCell[2].z());
   m_numParticles = numParticles;
+  q_values = boost::numeric::ublas::matrix<std::complex<float>>(numParticles, 7);
   for (int i = 0; i<numParticles; i++)
   {
     m_positions.push_back(std::move(vec3(positions[3*i], positions[3*i+1], positions[3*i+2])));
     m_status.push_back(0);
     m_neighbors.push_back(std::vector<int>{});
   }
+  movePositionsInsideBox();
   constructCellLists(3.5);
   cutoffNeighbors(3.5);
+  chillPlus();
+}
+
+void Chiller::movePositionsInsideBox()
+{
+  for (int i = 0; i<m_numParticles; i++)
+  {
+    for (int j = 0; j<3; j++)
+    {
+      if (m_positions[i][j]>m_simulationCell[0][j]+m_simulationCell[3][j])
+      {
+        m_positions[i][j] = m_positions[i][j] - m_simulationCellSize[j];
+      }
+      if (m_positions[i][j] < m_simulationCell[3][j])
+      {
+        m_positions[i][j] = m_positions[i][j] + m_simulationCellSize[j];
+      }
+    }
+  }
 }
 
 std::vector<int> Chiller::getStatus()
 {
-  std::vector<int> ret;
-  for (int i = 0; i<m_numParticles; i++)
-  {
-    ret.push_back(i);
-  }
-  return ret;
+  return m_status;
 }
 
 void Chiller::constructCellLists(double cutoffLength)
@@ -65,13 +114,8 @@ void Chiller::constructCellLists(double cutoffLength)
   {
     vec3 position = m_positions[i];
     vec3 binNumbers = (position-m_simulationCell[3])/m_binSize;
-    //binNumbers.floor();
-    if (binNumbers[0] >= m_nBins[0] || binNumbers[1]>=m_nBins[1] || binNumbers[2] >= m_nBins[2])
-    {std::cout << "too large bin number " << binNumbers << std::endl << position << std::endl;}
-    //std::cout << binNumbers << std::endl;
     m_cells[(int)binNumbers[0]][(int)binNumbers[1]][(int)binNumbers[2]]->push_back(i);
   }
-  std::cout << "hei" << std::endl;
 }
 
 void Chiller::cutoffNeighbors(double cutoffLength)
@@ -99,7 +143,7 @@ void Chiller::cutoffNeighbors(double cutoffLength)
                   int indZ = (int) otherCell[2];
                   for (auto p : *m_cells[indX][indY][indZ])
                   {
-                    vec3 diff = periodicDistance(m_positions[p], m_positions[l], thisCell, otherCell);
+                    vec3 diff = periodicDistance(m_positions[p], m_positions[l]);
                     if (diff.sqnorm()<sqCutoff && l!=p)
                     {
                       m_neighbors[l].push_back(p);
@@ -110,7 +154,7 @@ void Chiller::cutoffNeighbors(double cutoffLength)
           }
           if (m_neighbors[l].size() > 4)
           {
-            std::cout << m_positions[l] << std::endl;
+            std::cout << m_neighbors[l].size() << " " <<  m_positions[l] << std::endl;
           }
           //std::cout << m_neighbors[l].size() << " ";
         }
@@ -119,36 +163,102 @@ void Chiller::cutoffNeighbors(double cutoffLength)
   }
 }
 
+std::complex<float> Chiller::q_lm(int i, int m)
+{
+  std::complex<float> q = 0;
+  for (int j = 0; j<4; j++)
+  {
+    vec3 posi = m_positions[i];
+    vec3 posj = m_positions[m_neighbors[i][j]];
+    vec3 delta = periodicDistance(posi, posj);
+
+    std::pair<float, float> angles = polar_asimuthal(delta);
+    q += boost::math::spherical_harmonic(3, m, angles.first, angles.second);
+  }
+  return q;
+}
+
+std::complex<float> Chiller::q_lm_from_matrix(int i, int m)
+{
+  //std::cout << "Getting q(" << i << "," << m << ") from matrix"<< std::endl;
+  return q_values(i, m+3);
+}
+
 void Chiller::chillPlus()
 {
   for (int i = 0; i<m_numParticles; i++)
   {
-    for (int j = 0; j<m_neighbors[i].size(); j++)
+    if (m_neighbors[i].size() == 4)
     {
-
+      for (int m = -3; m<=3; m++)
+      {
+        //std::cout << "Setting q(" << i << "," << m << ") to  matrix"<< std::endl;
+        q_values(i,m+3) = q_lm(i,m);
+      }
+    }
+  }
+  for (int i = 0; i<m_numParticles; i++)
+  {
+    if (m_neighbors[i].size() == 4)
+    {
+      int num_eclipsed = 0;
+      for (int j = 0; j<m_neighbors[i].size(); j++)
+      {
+        std::complex<float> c1 = 0;
+        std::complex<float> c2 = 0;
+        std::complex<float> c3 = 0;
+        std::complex<float> q_i = 0;
+        std::complex<float> q_j = 0;
+        if (m_neighbors[m_neighbors[i][j]].size() == 4)
+        {
+          for (int m = -3; m<=3; m++)
+          {
+            q_i = q_lm_from_matrix(i, m);
+            q_j = q_lm_from_matrix(m_neighbors[i][j], m);
+            c1 += q_i*std::conj(q_j);
+            c2 += q_i*std::conj(q_i);
+            c3 += q_j*std::conj(q_j);
+          }
+          std::complex<float> c_ij = c1/(std::sqrt(c2)*std::sqrt(c3));
+          if (std::real(c_ij) > -0.35 && std::real(c_ij) < 0.25)
+          {
+            num_eclipsed ++;
+          }
+        }
+      }
+      m_status[i] = num_eclipsed;
+      //std::cout << num_eclipsed << std::endl;
     }
   }
 }
 
-vec3 Chiller::periodicDistance(vec3 & vec1, vec3 & vec2, vec3 & cell1, vec3 & cell2)
+
+std::pair<float, float> Chiller::polar_asimuthal(vec3 delta)
+{
+  float asimuthal = std::atan2(delta.y(), delta.x());
+  float xy_distance = std::sqrt(delta.x()*delta.x()+delta.y()*delta.y());
+  float polar = std::atan2(xy_distance, delta.z());
+  return std::pair<float, float>(polar, asimuthal);
+}
+
+vec3 Chiller::periodicDistance(vec3 & vec1, vec3 & vec2)
 {
     vec3 diff = vec2-vec1;
-    vec3 cellDiff = cell2-cell1;
-    diff[0] = diff[0] - m_simulationCellSize[0]*(cellDiff[0]==(m_nBins[0]-1)) + m_simulationCellSize[0]*(cellDiff[0]==(-m_nBins[0]+1));
-    diff[1] = diff[1] - m_simulationCellSize[1]*(cellDiff[1]==(m_nBins[1]-1)) + m_simulationCellSize[1]*(cellDiff[1]==(-m_nBins[1]+1));
-    diff[2] = diff[2] - m_simulationCellSize[2]*(cellDiff[2]==(m_nBins[2]-1)) + m_simulationCellSize[2]*(cellDiff[2]==(-m_nBins[2]+1));
+    diff[0] = diff[0] - m_simulationCellSize[0]*(diff[0]>(m_simulationCellSize[0]/2)) + m_simulationCellSize[0]*(diff[0] < -(m_simulationCellSize[0]/2));
+    diff[1] = diff[1] - m_simulationCellSize[1]*(diff[1]>(m_simulationCellSize[1]/2)) + m_simulationCellSize[1]*(diff[1] < -(m_simulationCellSize[1]/2));
+    diff[2] = diff[2] - m_simulationCellSize[2]*(diff[2]>(m_simulationCellSize[2]/2)) + m_simulationCellSize[2]*(diff[2] < -(m_simulationCellSize[2]/2));
     return diff;
 }
 
 vec3 Chiller::periodicCell(vec3 cell)
 {
     vec3 ret = cell;
-    for (int index = 0; index < 3; index++)
+    for (int i = 0; i < 3; i++)
     {
-        if (ret[index] == -1)
-            ret[index] = m_nBins[index];
-        if (ret[index] == m_nBins[index])
-            ret[index] = 0;
+        if (ret[i] == -1)
+            ret[i] = m_nBins[i]-1;
+        if (ret[i] == m_nBins[i])
+            ret[i] = 0;
     }
     return ret;
 }
