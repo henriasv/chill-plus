@@ -56,8 +56,8 @@ Chiller::Chiller(double* positions, int numParticles, double* simulationCell)
     m_neighbors.push_back(std::vector<int>{});
   }
   movePositionsInsideBox();
-  constructCellLists(3.5);
-  cutoffNeighbors(3.5);
+  constructCellLists(4.0);
+  cutoffNeighbors(4.0);
   chillPlus();
 }
 
@@ -152,9 +152,20 @@ void Chiller::cutoffNeighbors(double cutoffLength)
                 }
             }
           }
-          if (m_neighbors[l].size() > 4)
+          while (m_neighbors[l].size() > 4)
           {
-            std::cout << m_neighbors[l].size() << " " <<  m_positions[l] << std::endl;
+            double max_dist = 0;
+            int max_index = 0;
+            for (int p = 0; p<m_neighbors[l].size(); p++)
+            {
+              double tmp_dist = periodicDistance(m_positions[m_neighbors[l][p]], m_positions[l]).norm();
+              if (tmp_dist > max_dist)
+              {
+                max_dist = tmp_dist;
+                max_index = p;
+              }
+            }
+            m_neighbors[l].erase(m_neighbors[l].begin()+max_index);
           }
           //std::cout << m_neighbors[l].size() << " ";
         }
@@ -202,6 +213,7 @@ void Chiller::chillPlus()
     if (m_neighbors[i].size() == 4)
     {
       int num_eclipsed = 0;
+      bool eclipsed[] = {false, false, false, false};
       for (int j = 0; j<m_neighbors[i].size(); j++)
       {
         std::complex<float> c1 = 0;
@@ -222,11 +234,26 @@ void Chiller::chillPlus()
           std::complex<float> c_ij = c1/(std::sqrt(c2)*std::sqrt(c3));
           if (std::real(c_ij) > -0.35 && std::real(c_ij) < 0.25)
           {
+            eclipsed[j] = true;
             num_eclipsed ++;
           }
         }
       }
-      m_status[i] = num_eclipsed;
+
+      if (m_status[i]<num_eclipsed)
+      {
+        m_status[i] = num_eclipsed;
+      }
+
+/*
+      for (int j = 0; j<m_neighbors[i].size(); j++)
+      {
+        if (m_status[m_neighbors[i][j]] < num_eclipsed-1)
+        {
+          m_status[m_neighbors[i][j]] = num_eclipsed-1;
+        }
+      }
+*/
       //std::cout << num_eclipsed << std::endl;
     }
   }
