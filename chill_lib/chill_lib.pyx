@@ -5,7 +5,7 @@ cimport numpy as np
 from libcpp.vector cimport vector
 
 
-cdef extern from "chiller.h":
+cdef extern from "chill_lib.h":
   cdef cppclass Chiller:
     Chiller() except +
     Chiller(double*, int, double*) except +
